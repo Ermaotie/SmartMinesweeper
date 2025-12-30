@@ -1,9 +1,10 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Board } from "../types";
 
 export const getHintFromGemini = async (board: Board, minesRemaining: number): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  // Always use the process.env.API_KEY directly as per guidelines
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   // Condense board state to save tokens
   const simplifiedBoard = board.map(row => 
@@ -25,12 +26,14 @@ export const getHintFromGemini = async (board: Board, minesRemaining: number): P
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      // Use gemini-3-pro-preview for complex reasoning tasks like game logic analysis
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: {
         thinkingConfig: { thinkingBudget: 0 }
       }
     });
+    // Directly access the .text property
     return response.text || "AI currently unavailable. Use your logic!";
   } catch (error) {
     console.error("Gemini Hint Error:", error);

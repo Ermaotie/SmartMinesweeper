@@ -19,6 +19,8 @@ export interface CellData {
   isRevealed: boolean;
   isFlagged: boolean;
   neighborCount: number;
+  isHinted?: boolean;
+  hintType?: 'SAFE' | 'MINE' | null;
 }
 
 export enum GameStatus {

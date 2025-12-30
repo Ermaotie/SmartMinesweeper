@@ -11,11 +11,20 @@ interface CellProps {
 }
 
 export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu }) => {
-  const { isRevealed, isFlagged, isMine, neighborCount } = data;
+  const { isRevealed, isFlagged, isMine, neighborCount, isHinted, hintType } = data;
 
   let content = null;
   let bgColor = 'bg-slate-700/50 hover:bg-slate-600/50 cursor-pointer shadow-inner';
   let textColor = '';
+  let ringStyle = '';
+
+  if (isHinted && !isRevealed) {
+    if (hintType === 'SAFE') {
+      ringStyle = 'ring-2 ring-emerald-400 ring-inset shadow-[0_0_15px_rgba(52,211,153,0.5)]';
+    } else if (hintType === 'MINE') {
+      ringStyle = 'ring-2 ring-orange-500 ring-inset shadow-[0_0_15px_rgba(249,115,22,0.5)]';
+    }
+  }
 
   if (isRevealed) {
     bgColor = 'bg-slate-900/40 cursor-default';
@@ -30,7 +39,6 @@ export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu
     content = <i className="fa-solid fa-flag text-orange-500 text-xs md:text-sm"></i>;
   }
 
-  // Visual cues for game end
   if (status === GameStatus.LOST && isMine && !isRevealed) {
     content = <i className="fa-solid fa-bomb text-red-400 opacity-60 text-xs md:text-sm"></i>;
   }
@@ -44,7 +52,8 @@ export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu
         rounded-sm border border-slate-800/50 select-none
         ${bgColor} ${textColor} font-bold text-sm md:text-base
         active:scale-95 active:bg-slate-500/50
-        transition-transform duration-75
+        transition-all duration-75
+        ${ringStyle}
       `}
     >
       {content}

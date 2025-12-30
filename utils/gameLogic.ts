@@ -14,7 +14,6 @@ export function isSolvable(board: Board, startX: number, startY: number): boolea
     flagged: false 
   })));
 
-  // Initial reveal from start
   const reveal = (x: number, y: number) => {
     if (x < 0 || x >= rows || y < 0 || y >= cols || solved[x][y].revealed) return;
     solved[x][y].revealed = true;
@@ -32,32 +31,20 @@ export function isSolvable(board: Board, startX: number, startY: number): boolea
   while (progress) {
     progress = false;
 
-    // Standard Minesweeper logic rules
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!solved[r][c].revealed || board[r][c].neighborCount === 0) continue;
 
-        const neighbors = [];
-        for (let i = -1; i <= 1; i++) {
-          for (let j = -1; j <= 1; j++) {
-            const nr = r + i, nc = c + j;
-            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && (i !== 0 || j !== 0)) {
-              neighbors.push({ r: nr, c: nc });
-            }
-          }
-        }
-
+        const neighbors = getNeighbors(r, c, rows, cols);
         const hidden = neighbors.filter(n => !solved[n.r][n.c].revealed);
         const flaggedCount = neighbors.filter(n => solved[n.r][n.c].flagged).length;
         const unflaggedHidden = hidden.filter(n => !solved[n.r][n.c].flagged);
 
-        // Rule 1: If neighbor count == flags + unflagged hidden, all unflagged must be mines
         if (board[r][c].neighborCount === flaggedCount + unflaggedHidden.length && unflaggedHidden.length > 0) {
           unflaggedHidden.forEach(n => { solved[n.r][n.c].flagged = true; });
           progress = true;
         }
 
-        // Rule 2: If neighbor count == flagged count, all unflagged hidden must be safe
         if (board[r][c].neighborCount === flaggedCount && unflaggedHidden.length > 0) {
           unflaggedHidden.forEach(n => reveal(n.r, n.c));
           progress = true;
@@ -66,13 +53,57 @@ export function isSolvable(board: Board, startX: number, startY: number): boolea
     }
   }
 
-  // Check if all non-mine cells are revealed
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (!board[r][c].isMine && !solved[r][c].revealed) return false;
     }
   }
   return true;
+}
+
+function getNeighbors(r: number, c: number, rows: number, cols: number) {
+  const neighbors = [];
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const nr = r + i, nc = c + j;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && (i !== 0 || j !== 0)) {
+        neighbors.push({ r: nr, c: nc });
+      }
+    }
+  }
+  return neighbors;
+}
+
+/**
+ * Finds the first logical move available on the current board.
+ */
+export function findHint(board: Board): { x: number; y: number; type: 'SAFE' | 'MINE' } | null {
+  const rows = board.length;
+  const cols = board[0].length;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!board[r][c].isRevealed || board[r][c].neighborCount === 0) continue;
+
+      const neighbors = getNeighbors(r, c, rows, cols);
+      const hidden = neighbors.filter(n => !board[n.r][n.c].isRevealed);
+      const flaggedCount = neighbors.filter(n => board[n.r][n.c].isFlagged).length;
+      const unflaggedHidden = hidden.filter(n => !board[n.r][n.c].isFlagged);
+
+      if (unflaggedHidden.length === 0) continue;
+
+      // Rule 1: All unflagged hidden must be mines
+      if (board[r][c].neighborCount === flaggedCount + unflaggedHidden.length) {
+        return { x: unflaggedHidden[0].r, y: unflaggedHidden[0].c, type: 'MINE' };
+      }
+
+      // Rule 2: All unflagged hidden must be safe
+      if (board[r][c].neighborCount === flaggedCount) {
+        return { x: unflaggedHidden[0].r, y: unflaggedHidden[0].c, type: 'SAFE' };
+      }
+    }
+  }
+  return null;
 }
 
 export function createEmptyBoard(rows: number, cols: number): Board {
@@ -85,18 +116,15 @@ export function createEmptyBoard(rows: number, cols: number): Board {
 
 export function generateGuaranteedBoard(rows: number, cols: number, mines: number, startX: number, startY: number): Board {
   let attempts = 0;
-  const maxAttempts = 500; // Reasonable limit for performance
+  const maxAttempts = 500;
 
   while (attempts < maxAttempts) {
     attempts++;
     const board = createEmptyBoard(rows, cols);
-    
-    // Randomly place mines avoiding start area (3x3 grid around start)
     let placed = 0;
     while (placed < mines) {
       const rx = Math.floor(Math.random() * rows);
       const ry = Math.floor(Math.random() * cols);
-      
       const isNearStart = Math.abs(rx - startX) <= 1 && Math.abs(ry - startY) <= 1;
       if (!board[rx][ry].isMine && !isNearStart) {
         board[rx][ry].isMine = true;
@@ -104,7 +132,6 @@ export function generateGuaranteedBoard(rows: number, cols: number, mines: numbe
       }
     }
 
-    // Calculate neighbors
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (board[r][c].isMine) continue;
@@ -119,24 +146,16 @@ export function generateGuaranteedBoard(rows: number, cols: number, mines: numbe
       }
     }
 
-    // Check solvability
-    if (isSolvable(board, startX, startY)) {
-      return board;
-    }
+    if (isSolvable(board, startX, startY)) return board;
   }
-  
-  // Fallback to a simple board if we can't find a 100% solvable one (unlikely with 500 attempts)
   return createEmptyBoard(rows, cols); 
 }
 
 export function floodFill(board: Board, x: number, y: number): void {
   const rows = board.length;
   const cols = board[0].length;
-
   if (x < 0 || x >= rows || y < 0 || y >= cols || board[x][y].isRevealed || board[x][y].isFlagged) return;
-
   board[x][y].isRevealed = true;
-
   if (board[x][y].neighborCount === 0) {
     for (let i = -1; i <= 1; i++) {
       for (let j = -1; j <= 1; j++) {

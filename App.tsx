@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DifficultyLevel, Board, GameStatus } from './types';
 import { DIFFICULTIES } from './constants';
-import { createEmptyBoard, generateGuaranteedBoard, floodFill } from './utils/gameLogic';
+import { createEmptyBoard, generateGuaranteedBoard, floodFill, findHint } from './utils/gameLogic';
 import { Cell } from './components/Cell';
 import { getHintFromGemini } from './services/geminiService';
 
@@ -12,19 +12,22 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<GameStatus>(GameStatus.IDLE);
   const [flags, setFlags] = useState(0);
   const [timer, setTimer] = useState(0);
-  const [hint, setHint] = useState<string | null>(null);
-  const [isHintLoading, setIsHintLoading] = useState(false);
+  const [hintMessage, setHintMessage] = useState<string | null>(null);
   
   const timerRef = useRef<number | null>(null);
   const config = DIFFICULTIES[difficulty];
 
-  // Initialize Board
+  // Explicitly set return type to Board to maintain optional properties as optional and avoid inference errors
+  const clearHints = (currentBoard: Board): Board => {
+    return currentBoard.map(row => row.map(cell => ({ ...cell, isHinted: false, hintType: null })));
+  };
+
   const initGame = useCallback(() => {
     setBoard(createEmptyBoard(config.rows, config.cols));
     setStatus(GameStatus.IDLE);
     setFlags(0);
     setTimer(0);
-    setHint(null);
+    setHintMessage(null);
     if (timerRef.current) clearInterval(timerRef.current);
   }, [config]);
 
@@ -32,7 +35,6 @@ const App: React.FC = () => {
     initGame();
   }, [initGame]);
 
-  // Win condition check
   const checkWin = useCallback((currentBoard: Board) => {
     let revealedCount = 0;
     currentBoard.forEach(row => row.forEach(cell => {
@@ -49,19 +51,17 @@ const App: React.FC = () => {
   const handleCellClick = (x: number, y: number) => {
     if (status === GameStatus.WON || status === GameStatus.LOST || board[x][y].isFlagged) return;
 
-    let newBoard = [...board.map(row => [...row])];
+    // Explicitly type newBoard as Board to avoid incorrect inference of required optional fields
+    let newBoard: Board = clearHints([...board.map(row => [...row])]);
+    setHintMessage(null);
 
-    // First click logic - Generate solvable board
     if (status === GameStatus.IDLE) {
       setStatus(GameStatus.GENERATING);
-      // Timeout to show "Generating" state if it takes a moment
       setTimeout(() => {
         newBoard = generateGuaranteedBoard(config.rows, config.cols, config.mines, x, y);
         floodFill(newBoard, x, y);
         setBoard(newBoard);
         setStatus(GameStatus.PLAYING);
-        
-        // Start timer
         timerRef.current = window.setInterval(() => {
           setTimer(prev => prev + 1);
         }, 1000);
@@ -87,35 +87,46 @@ const App: React.FC = () => {
     if (status !== GameStatus.PLAYING && status !== GameStatus.IDLE) return;
     if (board[x][y].isRevealed) return;
 
-    const newBoard = [...board.map(row => [...row])];
-    const isNowFlagged = !newBoard[x][y].isFlagged;
+    const newBoard = clearHints([...board.map(row => [...row])]);
+    setHintMessage(null);
     
-    if (isNowFlagged && flags >= config.mines) return; // Optional: Cap flags at mine count
-
+    const isNowFlagged = !newBoard[x][y].isFlagged;
     newBoard[x][y].isFlagged = isNowFlagged;
     setBoard(newBoard);
     setFlags(prev => isNowFlagged ? prev + 1 : prev - 1);
   };
 
-  const fetchHint = async () => {
-    if (status !== GameStatus.PLAYING || isHintLoading) return;
-    setIsHintLoading(true);
-    setHint("Analyzing board...");
-    const aiHint = await getHintFromGemini(board, config.mines - flags);
-    setHint(aiHint);
-    setIsHintLoading(false);
+  const triggerHint = async () => {
+    if (status !== GameStatus.PLAYING) return;
+    
+    const hint = findHint(board);
+    if (hint) {
+      const newBoard = [...board.map(row => [...row])];
+      newBoard[hint.x][hint.y].isHinted = true;
+      newBoard[hint.x][hint.y].hintType = hint.type;
+      setBoard(newBoard);
+      setHintMessage(hint.type === 'SAFE' ? "高亮处可以安全点击！" : "高亮处根据逻辑必然是雷，请插旗。");
+    } else {
+      // Fallback to Gemini AI for complex reasoning when simple logical rules aren't enough
+      setHintMessage("正在分析局面中 (AI)...");
+      try {
+        const aiHint = await getHintFromGemini(board, config.mines - flags);
+        setHintMessage(aiHint);
+      } catch (error) {
+        setHintMessage("当前局势需要尝试更多已知区域，或暂时没有简单逻辑结论。");
+      }
+    }
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4">
-      {/* Header & Controls */}
       <div className="w-full max-w-4xl bg-slate-800/50 backdrop-blur-md rounded-2xl p-6 mb-6 border border-slate-700 shadow-2xl">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex flex-col items-start gap-1">
             <h1 className="text-3xl font-extrabold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
               Smart Minesweeper
             </h1>
-            <p className="text-slate-400 text-sm font-medium">100% 逻辑可解 • AI 战术辅助</p>
+            <p className="text-slate-400 text-sm font-medium">100% 逻辑可解 • 智能逻辑提示</p>
           </div>
 
           <div className="flex bg-slate-900/60 p-1.5 rounded-xl border border-slate-700/50">
@@ -154,7 +165,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Game Board */}
       <div className="relative group perspective-1000">
         {status === GameStatus.GENERATING && (
           <div className="absolute inset-0 z-10 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center rounded-xl animate-pulse">
@@ -189,38 +199,36 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Hint & Message Footer */}
       <div className="w-full max-w-4xl mt-6 flex flex-col gap-4">
         {status === GameStatus.LOST && (
           <div className="bg-red-500/20 border border-red-500/50 p-4 rounded-xl text-center text-red-300 font-bold animate-bounce">
-            BOOM! 踩到地雷了。试试更高级的逻辑推理吧！
+            BOOM! 踩到地雷了。试试逻辑推演！
           </div>
         )}
         {status === GameStatus.WON && (
           <div className="bg-green-500/20 border border-green-500/50 p-4 rounded-xl text-center text-green-300 font-bold shadow-[0_0_20px_rgba(34,197,94,0.3)]">
-            恭喜！你以纯逻辑拆除了所有地雷。完美的一局！
+            恭喜！完美拆除。
           </div>
         )}
 
-        <div className="bg-slate-800/40 border border-slate-700/50 p-5 rounded-xl flex items-start gap-4 transition-all">
+        <div className="bg-slate-800/40 border border-slate-700/50 p-5 rounded-xl flex items-center gap-4 transition-all">
           <button 
-            onClick={fetchHint}
-            disabled={status !== GameStatus.PLAYING || isHintLoading}
+            onClick={triggerHint}
+            disabled={status !== GameStatus.PLAYING}
             className={`
               flex-shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center text-2xl transition-all
               ${status === GameStatus.PLAYING 
                 ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg active:scale-95' 
                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'}
-              ${isHintLoading ? 'animate-pulse' : ''}
             `}
-            title="Gemini AI 提示"
+            title="获取逻辑提示"
           >
-            <i className={`fa-solid ${isHintLoading ? 'fa-spinner fa-spin' : 'fa-brain'}`}></i>
+            <i className="fa-solid fa-lightbulb"></i>
           </button>
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Gemini AI 战术官</span>
-            <p className="text-slate-300 text-sm leading-relaxed italic">
-              {hint || (status === GameStatus.IDLE ? "点击任意格子开始游戏。首点区域必然是安全的，且全盘 100% 可逻辑推导。" : "游戏中遇到僵局？点击左侧大脑图标获取 AI 战术指引。")}
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">逻辑推演助手</span>
+            <p className="text-slate-300 text-sm leading-relaxed">
+              {hintMessage || (status === GameStatus.IDLE ? "首点区域必然安全。遇到瓶颈时点击左侧灯泡获取逻辑提示。" : "观察已揭开的数字，运用逻辑排除地雷。")}
             </p>
           </div>
         </div>
