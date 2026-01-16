@@ -8,9 +8,10 @@ interface CellProps {
   status: GameStatus;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onDoubleClick: () => void;
 }
 
-export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu }) => {
+export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu, onDoubleClick }) => {
   const { isRevealed, isFlagged, isMine, neighborCount, isHinted, hintType } = data;
 
   let content = null;
@@ -47,6 +48,7 @@ export const Cell: React.FC<CellProps> = ({ data, status, onClick, onContextMenu
     <div
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onDoubleClick={onDoubleClick}
       className={`
         mine-cell w-full h-full flex items-center justify-center 
         rounded-sm border border-slate-800/50 select-none

@@ -17,7 +17,6 @@ const App: React.FC = () => {
   const timerRef = useRef<number | null>(null);
   const config = DIFFICULTIES[difficulty];
 
-  // Explicitly set return type to Board to maintain optional properties as optional and avoid inference errors
   const clearHints = (currentBoard: Board): Board => {
     return currentBoard.map(row => row.map(cell => ({ ...cell, isHinted: false, hintType: null })));
   };
@@ -44,14 +43,13 @@ const App: React.FC = () => {
     const totalCells = config.rows * config.cols;
     if (revealedCount === totalCells - config.mines) {
       setStatus(GameStatus.WON);
-      clearInterval(timerRef.current!);
+      if (timerRef.current) clearInterval(timerRef.current);
     }
   }, [config]);
 
   const handleCellClick = (x: number, y: number) => {
     if (status === GameStatus.WON || status === GameStatus.LOST || board[x][y].isFlagged) return;
 
-    // Explicitly type newBoard as Board to avoid incorrect inference of required optional fields
     let newBoard: Board = clearHints([...board.map(row => [...row])]);
     setHintMessage(null);
 
@@ -72,7 +70,7 @@ const App: React.FC = () => {
     if (newBoard[x][y].isMine) {
       newBoard[x][y].isRevealed = true;
       setStatus(GameStatus.LOST);
-      clearInterval(timerRef.current!);
+      if (timerRef.current) clearInterval(timerRef.current);
       setBoard(newBoard);
       return;
     }
@@ -96,6 +94,51 @@ const App: React.FC = () => {
     setFlags(prev => isNowFlagged ? prev + 1 : prev - 1);
   };
 
+  const handleCellDoubleClick = (x: number, y: number) => {
+    if (status !== GameStatus.PLAYING) return;
+    const cell = board[x][y];
+    if (!cell.isRevealed || cell.neighborCount === 0) return;
+
+    // Count surrounding flags
+    let flagCount = 0;
+    const neighbors: {nx: number, ny: number}[] = [];
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        if (i === 0 && j === 0) continue;
+        const nx = x + i;
+        const ny = y + j;
+        if (nx >= 0 && nx < config.rows && ny >= 0 && ny < config.cols) {
+          neighbors.push({nx, ny});
+          if (board[nx][ny].isFlagged) flagCount++;
+        }
+      }
+    }
+
+    // Chording logic: if flags match count, reveal remaining neighbors
+    if (flagCount === cell.neighborCount) {
+      const newBoard = clearHints([...board.map(row => [...row])]);
+      let hitMine = false;
+      
+      neighbors.forEach(({nx, ny}) => {
+        if (!newBoard[nx][ny].isFlagged && !newBoard[nx][ny].isRevealed) {
+          if (newBoard[nx][ny].isMine) {
+            newBoard[nx][ny].isRevealed = true;
+            hitMine = true;
+          } else {
+            floodFill(newBoard, nx, ny);
+          }
+        }
+      });
+
+      if (hitMine) {
+        setStatus(GameStatus.LOST);
+        if (timerRef.current) clearInterval(timerRef.current);
+      }
+      setBoard(newBoard);
+      checkWin(newBoard);
+    }
+  };
+
   const triggerHint = async () => {
     if (status !== GameStatus.PLAYING) return;
     
@@ -107,7 +150,6 @@ const App: React.FC = () => {
       setBoard(newBoard);
       setHintMessage(hint.type === 'SAFE' ? "高亮处可以安全点击！" : "高亮处根据逻辑必然是雷，请插旗。");
     } else {
-      // Fallback to Gemini AI for complex reasoning when simple logical rules aren't enough
       setHintMessage("正在分析局面中 (AI)...");
       try {
         const aiHint = await getHintFromGemini(board, config.mines - flags);
@@ -126,7 +168,7 @@ const App: React.FC = () => {
             <h1 className="text-3xl font-extrabold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
               Smart Minesweeper
             </h1>
-            <p className="text-slate-400 text-sm font-medium">100% 逻辑可解 • 智能逻辑提示</p>
+            <p className="text-slate-400 text-sm font-medium">100% 逻辑可解 • 支持双击开图(Chording)</p>
           </div>
 
           <div className="flex bg-slate-900/60 p-1.5 rounded-xl border border-slate-700/50">
@@ -192,6 +234,7 @@ const App: React.FC = () => {
                   status={status}
                   onClick={() => handleCellClick(x, y)}
                   onContextMenu={(e) => handleRightClick(e, x, y)}
+                  onDoubleClick={() => handleCellDoubleClick(x, y)}
                 />
               </div>
             ))
@@ -228,7 +271,7 @@ const App: React.FC = () => {
           <div className="flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">逻辑推演助手</span>
             <p className="text-slate-300 text-sm leading-relaxed">
-              {hintMessage || (status === GameStatus.IDLE ? "首点区域必然安全。遇到瓶颈时点击左侧灯泡获取逻辑提示。" : "观察已揭开的数字，运用逻辑排除地雷。")}
+              {hintMessage || (status === GameStatus.IDLE ? "首点区域必然安全。数字匹配周围旗帜时，双击数字快速开图。" : "观察数字，若周围旗帜数已满足该数字，双击该格可揭开其余邻近格。")}
             </p>
           </div>
         </div>
@@ -237,6 +280,7 @@ const App: React.FC = () => {
       <div className="mt-8 text-slate-600 text-[10px] uppercase tracking-[0.2em] font-medium flex gap-6">
         <span>左键: 揭开</span>
         <span>右键: 插旗</span>
+        <span>双击: 智能开图</span>
         <span>SmartMines © 2024</span>
       </div>
     </div>
