@@ -4,7 +4,6 @@ import { DifficultyLevel, Board, GameStatus } from './types';
 import { DIFFICULTIES } from './constants';
 import { createEmptyBoard, generateGuaranteedBoard, floodFill, findHint } from './utils/gameLogic';
 import { Cell } from './components/Cell';
-import { getHintFromGemini } from './services/geminiService';
 
 const App: React.FC = () => {
   const [difficulty, setDifficulty] = useState<DifficultyLevel>(DifficultyLevel.BEGINNER);
@@ -44,31 +43,37 @@ const App: React.FC = () => {
     if (revealedCount === totalCells - config.mines) {
       setStatus(GameStatus.WON);
       if (timerRef.current) clearInterval(timerRef.current);
+      const finalBoard = currentBoard.map(row => row.map(cell => {
+        if (cell.isMine && !cell.isFlagged) return { ...cell, isFlagged: true };
+        return cell;
+      }));
+      setBoard(finalBoard);
+      setFlags(config.mines);
     }
   }, [config]);
 
-  const handleCellClick = (x: number, y: number) => {
+  const handleCellClick = async (x: number, y: number) => {
     if (status === GameStatus.WON || status === GameStatus.LOST || board[x][y].isFlagged) return;
+
+    if (status === GameStatus.IDLE) {
+      setStatus(GameStatus.GENERATING);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const newBoard = await generateGuaranteedBoard(config.rows, config.cols, config.mines, x, y);
+      floodFill(newBoard, x, y);
+      setBoard(newBoard);
+      setStatus(GameStatus.PLAYING);
+      timerRef.current = window.setInterval(() => {
+        setTimer(prev => prev + 1);
+      }, 1000);
+      return;
+    }
 
     let newBoard: Board = clearHints([...board.map(row => [...row])]);
     setHintMessage(null);
 
-    if (status === GameStatus.IDLE) {
-      setStatus(GameStatus.GENERATING);
-      setTimeout(() => {
-        newBoard = generateGuaranteedBoard(config.rows, config.cols, config.mines, x, y);
-        floodFill(newBoard, x, y);
-        setBoard(newBoard);
-        setStatus(GameStatus.PLAYING);
-        timerRef.current = window.setInterval(() => {
-          setTimer(prev => prev + 1);
-        }, 1000);
-      }, 0);
-      return;
-    }
-
     if (newBoard[x][y].isMine) {
       newBoard[x][y].isRevealed = true;
+      newBoard.forEach(row => row.forEach(c => { if (c.isMine) c.isRevealed = true; }));
       setStatus(GameStatus.LOST);
       if (timerRef.current) clearInterval(timerRef.current);
       setBoard(newBoard);
@@ -84,10 +89,8 @@ const App: React.FC = () => {
     e.preventDefault();
     if (status !== GameStatus.PLAYING && status !== GameStatus.IDLE) return;
     if (board[x][y].isRevealed) return;
-
     const newBoard = clearHints([...board.map(row => [...row])]);
     setHintMessage(null);
-    
     const isNowFlagged = !newBoard[x][y].isFlagged;
     newBoard[x][y].isFlagged = isNowFlagged;
     setBoard(newBoard);
@@ -99,38 +102,29 @@ const App: React.FC = () => {
     const cell = board[x][y];
     if (!cell.isRevealed || cell.neighborCount === 0) return;
 
-    // Count surrounding flags
     let flagCount = 0;
     const neighbors: {nx: number, ny: number}[] = [];
     for (let i = -1; i <= 1; i++) {
       for (let j = -1; j <= 1; j++) {
-        if (i === 0 && j === 0) continue;
-        const nx = x + i;
-        const ny = y + j;
-        if (nx >= 0 && nx < config.rows && ny >= 0 && ny < config.cols) {
+        const nx = x + i, ny = y + j;
+        if (nx >= 0 && nx < config.rows && ny >= 0 && ny < config.cols && (i !== 0 || j !== 0)) {
           neighbors.push({nx, ny});
           if (board[nx][ny].isFlagged) flagCount++;
         }
       }
     }
 
-    // Chording logic: if flags match count, reveal remaining neighbors
     if (flagCount === cell.neighborCount) {
       const newBoard = clearHints([...board.map(row => [...row])]);
       let hitMine = false;
-      
       neighbors.forEach(({nx, ny}) => {
         if (!newBoard[nx][ny].isFlagged && !newBoard[nx][ny].isRevealed) {
-          if (newBoard[nx][ny].isMine) {
-            newBoard[nx][ny].isRevealed = true;
-            hitMine = true;
-          } else {
-            floodFill(newBoard, nx, ny);
-          }
+          if (newBoard[nx][ny].isMine) { newBoard[nx][ny].isRevealed = true; hitMine = true; }
+          else { floodFill(newBoard, nx, ny); }
         }
       });
-
       if (hitMine) {
+        newBoard.forEach(row => row.forEach(c => { if (c.isMine) c.isRevealed = true; }));
         setStatus(GameStatus.LOST);
         if (timerRef.current) clearInterval(timerRef.current);
       }
@@ -139,48 +133,46 @@ const App: React.FC = () => {
     }
   };
 
-  const triggerHint = async () => {
+  const triggerHint = () => {
     if (status !== GameStatus.PLAYING) return;
-    
     const hint = findHint(board);
     if (hint) {
       const newBoard = [...board.map(row => [...row])];
       newBoard[hint.x][hint.y].isHinted = true;
       newBoard[hint.x][hint.y].hintType = hint.type;
       setBoard(newBoard);
-      setHintMessage(hint.type === 'SAFE' ? "高亮处可以安全点击！" : "高亮处根据逻辑必然是雷，请插旗。");
+      const prefix = hint.logic === 'ADVANCED' ? "【二阶逻辑推演】" : "【基础逻辑】";
+      const desc = hint.type === 'SAFE' ? "通过集合约减，此格必然安全。" : "基于格间约束，此格确定是雷。";
+      setHintMessage(`${prefix} ${desc}`);
     } else {
-      setHintMessage("正在分析局面中 (AI)...");
-      try {
-        const aiHint = await getHintFromGemini(board, config.mines - flags);
-        setHintMessage(aiHint);
-      } catch (error) {
-        setHintMessage("当前局势需要尝试更多已知区域，或暂时没有简单逻辑结论。");
-      }
+      setHintMessage("当前局势复杂，已超出二阶逻辑推算范围，可能需要更高阶尝试。");
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-4xl bg-slate-800/50 backdrop-blur-md rounded-2xl p-6 mb-6 border border-slate-700 shadow-2xl">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-200">
+      <div className="w-full max-w-4xl bg-slate-900/80 backdrop-blur-xl rounded-2xl p-6 mb-6 border border-slate-800 shadow-2xl">
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
           <div className="flex flex-col items-start gap-1">
-            <h1 className="text-3xl font-extrabold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-              Smart Minesweeper
+            <h1 className="text-3xl font-black bg-gradient-to-br from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent tracking-tight">
+              MASTER MINESWEEPER
             </h1>
-            <p className="text-slate-400 text-sm font-medium">100% 逻辑可解 • 支持双击开图(Chording)</p>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+              二阶子集约减引擎 • 深度可解性
+            </p>
           </div>
 
-          <div className="flex bg-slate-900/60 p-1.5 rounded-xl border border-slate-700/50">
+          <div className="flex bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">
             {(Object.keys(DIFFICULTIES) as DifficultyLevel[]).map(level => (
               <button
                 key={level}
                 onClick={() => setDifficulty(level)}
                 className={`
-                  px-4 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200
+                  px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300
                   ${difficulty === level 
-                    ? 'bg-blue-600 text-white shadow-lg' 
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'}
+                    ? 'bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)]' 
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}
                 `}
               >
                 {DIFFICULTIES[level].name}
@@ -188,47 +180,61 @@ const App: React.FC = () => {
             ))}
           </div>
 
-          <div className="flex items-center gap-4">
-             <div className="flex flex-col items-center min-w-[60px]">
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Mines</span>
-                <span className="text-xl font-mono text-orange-400 font-bold">{Math.max(0, config.mines - flags)}</span>
+          <div className="flex items-center gap-6">
+             <div className="flex flex-col items-center">
+                <span className="text-[10px] text-slate-600 uppercase tracking-tighter font-black mb-1">地雷</span>
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                  <i className="fa-solid fa-bomb text-orange-500 text-xs"></i>
+                  <span className="text-xl font-mono text-orange-400 font-bold leading-none">{Math.max(0, config.mines - flags)}</span>
+                </div>
              </div>
-             <div className="flex flex-col items-center min-w-[60px]">
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Time</span>
-                <span className="text-xl font-mono text-blue-400 font-bold">{timer}s</span>
+             <div className="flex flex-col items-center">
+                <span className="text-[10px] text-slate-600 uppercase tracking-tighter font-black mb-1">计时</span>
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                  <i className="fa-regular fa-clock text-blue-500 text-xs"></i>
+                  <span className="text-xl font-mono text-blue-400 font-bold leading-none">{timer}</span>
+                </div>
              </div>
              <button 
                 onClick={initGame}
-                className="w-12 h-12 bg-slate-700 hover:bg-slate-600 rounded-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95 border border-slate-600"
+                className="w-12 h-12 bg-slate-800 hover:bg-indigo-600 group rounded-xl flex items-center justify-center transition-all duration-300 hover:shadow-[0_0_20px_rgba(79,70,229,0.3)] border border-slate-700"
              >
-                <i className={`fa-solid ${status === GameStatus.WON ? 'fa-face-laugh-beam text-green-400' : status === GameStatus.LOST ? 'fa-face-sad-tear text-red-400' : 'fa-rotate-right text-white'}`}></i>
+                <i className={`fa-solid transition-transform group-hover:rotate-180 duration-500 ${status === GameStatus.WON ? 'fa-face-smile text-emerald-400 group-hover:text-white' : status === GameStatus.LOST ? 'fa-face-frown text-red-400 group-hover:text-white' : 'fa-rotate-right text-slate-300 group-hover:text-white'}`}></i>
              </button>
           </div>
         </div>
       </div>
 
-      <div className="relative group perspective-1000">
+      <div className="relative group">
         {status === GameStatus.GENERATING && (
-          <div className="absolute inset-0 z-10 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center rounded-xl animate-pulse">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              <span className="text-white font-bold tracking-widest uppercase text-xs">生成平衡棋盘中...</span>
+          <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center rounded-2xl">
+            <div className="flex flex-col items-center gap-5 p-10 bg-slate-900 rounded-3xl border border-slate-700 shadow-2xl">
+              <div className="relative">
+                <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <i className="fa-solid fa-brain text-indigo-400 animate-pulse"></i>
+                </div>
+              </div>
+              <div className="text-center">
+                <span className="text-white font-black tracking-widest uppercase text-sm block mb-2">深度逻辑拓扑生成中</span>
+                <span className="text-slate-500 text-xs font-medium italic">正在验证棋盘是否支持二阶子集约减...</span>
+              </div>
             </div>
           </div>
         )}
 
         <div 
-          className="bg-slate-800 p-2 md:p-4 rounded-xl shadow-2xl border-4 border-slate-700/80 overflow-auto max-h-[70vh] max-w-[95vw]"
+          className="bg-slate-900 p-2 md:p-5 rounded-2xl shadow-2xl border-4 border-slate-800 overflow-auto max-h-[65vh] max-w-[95vw] scrollbar-hide"
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${config.cols}, minmax(28px, 1fr))`,
-            gap: '2px',
+            gridTemplateColumns: `repeat(${config.cols}, minmax(30px, 1fr))`,
+            gap: '3px',
             width: 'fit-content'
           }}
         >
           {board.map((row, x) => 
             row.map((cell, y) => (
-              <div key={`${x}-${y}`} className="w-7 h-7 md:w-9 md:h-9">
+              <div key={`${x}-${y}`} className="w-8 h-8 md:w-10 md:h-10">
                 <Cell 
                   data={cell} 
                   status={status}
@@ -242,46 +248,48 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <div className="w-full max-w-4xl mt-6 flex flex-col gap-4">
-        {status === GameStatus.LOST && (
-          <div className="bg-red-500/20 border border-red-500/50 p-4 rounded-xl text-center text-red-300 font-bold animate-bounce">
-            BOOM! 踩到地雷了。试试逻辑推演！
+      <div className="w-full max-w-4xl mt-8">
+        <div className="flex flex-col md:flex-row gap-5">
+          <div className="flex-1 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex items-center gap-5 group transition-all hover:bg-slate-800/80 border-l-4 border-l-indigo-500">
+            <button 
+              onClick={triggerHint}
+              disabled={status !== GameStatus.PLAYING}
+              className={`
+                flex-shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center text-3xl transition-all duration-300
+                ${status === GameStatus.PLAYING 
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg active:scale-90' 
+                  : 'bg-slate-800 text-slate-600 cursor-not-allowed'}
+              `}
+            >
+              <i className="fa-solid fa-microchip"></i>
+            </button>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-black">推演内核 V2.0</span>
+              <p className="text-slate-400 text-sm leading-relaxed font-medium">
+                {hintMessage || (status === GameStatus.IDLE ? "点击任意起始位，系统将计算拓扑结构以确保逻辑闭环。" : "支持 1-2-1 / 1-2-2-1 等进阶模式的自动化子集识别。")}
+              </p>
+            </div>
           </div>
-        )}
-        {status === GameStatus.WON && (
-          <div className="bg-green-500/20 border border-green-500/50 p-4 rounded-xl text-center text-green-300 font-bold shadow-[0_0_20px_rgba(34,197,94,0.3)]">
-            恭喜！完美拆除。
-          </div>
-        )}
-
-        <div className="bg-slate-800/40 border border-slate-700/50 p-5 rounded-xl flex items-center gap-4 transition-all">
-          <button 
-            onClick={triggerHint}
-            disabled={status !== GameStatus.PLAYING}
-            className={`
-              flex-shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center text-2xl transition-all
-              ${status === GameStatus.PLAYING 
-                ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg active:scale-95' 
-                : 'bg-slate-700 text-slate-500 cursor-not-allowed'}
-            `}
-            title="获取逻辑提示"
-          >
-            <i className="fa-solid fa-lightbulb"></i>
-          </button>
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">逻辑推演助手</span>
-            <p className="text-slate-300 text-sm leading-relaxed">
-              {hintMessage || (status === GameStatus.IDLE ? "首点区域必然安全。数字匹配周围旗帜时，双击数字快速开图。" : "观察数字，若周围旗帜数已满足该数字，双击该格可揭开其余邻近格。")}
-            </p>
+          
+          <div className="md:w-64 flex flex-col justify-center gap-3">
+             {status === GameStatus.WON && (
+               <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl text-center text-emerald-400 font-black text-xs uppercase tracking-widest animate-bounce">
+                 LOGIC CLEARED
+               </div>
+             )}
+             {status === GameStatus.LOST && (
+               <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl text-center text-red-400 font-black text-xs uppercase tracking-widest">
+                 DEDUCTION FAILED
+               </div>
+             )}
           </div>
         </div>
       </div>
       
-      <div className="mt-8 text-slate-600 text-[10px] uppercase tracking-[0.2em] font-medium flex gap-6">
-        <span>左键: 揭开</span>
-        <span>右键: 插旗</span>
-        <span>双击: 智能开图</span>
-        <span>SmartMines © 2024</span>
+      <div className="mt-8 opacity-40 text-slate-700 text-[9px] uppercase tracking-[0.4em] font-black flex flex-wrap justify-center gap-10">
+        <span>Subset Reduction Logic</span>
+        <span>Discrete Math Engine</span>
+        <span>Pattern Match v2</span>
       </div>
     </div>
   );
