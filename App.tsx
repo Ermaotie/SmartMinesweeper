@@ -141,16 +141,17 @@ const App: React.FC = () => {
       newBoard[hint.x][hint.y].isHinted = true;
       newBoard[hint.x][hint.y].hintType = hint.type;
       setBoard(newBoard);
-      const prefix = hint.logic === 'ADVANCED' ? "【二阶逻辑推演】" : "【基础逻辑】";
+      const prefix = hint.logic === 'ADVANCED' ? "【二阶推演】" : "【基础逻辑】";
       const desc = hint.type === 'SAFE' ? "通过集合约减，此格必然安全。" : "基于格间约束，此格确定是雷。";
       setHintMessage(`${prefix} ${desc}`);
     } else {
-      setHintMessage("当前局势复杂，已超出二阶逻辑推算范围，可能需要更高阶尝试。");
+      setHintMessage("当前局势复杂，已超出推演内核识别范围。");
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-200">
+      {/* 顶部页眉 */}
       <div className="w-full max-w-4xl bg-slate-900/80 backdrop-blur-xl rounded-2xl p-6 mb-6 border border-slate-800 shadow-2xl">
         <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
           <div className="flex flex-col items-start gap-1">
@@ -159,7 +160,7 @@ const App: React.FC = () => {
             </h1>
             <p className="text-slate-500 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
-              二阶子集约减引擎 • 深度可解性
+              二阶子集约减引擎 • V2.0
             </p>
           </div>
 
@@ -205,6 +206,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* 游戏主体 */}
       <div className="relative group">
         {status === GameStatus.GENERATING && (
           <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center rounded-2xl">
@@ -248,45 +250,80 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <div className="w-full max-w-4xl mt-8">
-        <div className="flex flex-col md:flex-row gap-5">
-          <div className="flex-1 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex items-center gap-5 group transition-all hover:bg-slate-800/80 border-l-4 border-l-indigo-500">
+      {/* 底部功能区：推演内核与操作指南 */}
+      <div className="w-full max-w-4xl mt-8 flex flex-col gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          
+          {/* 推演内核面板 - 宽度与页眉一致 */}
+          <div className="lg:col-span-8 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex items-center gap-5 group transition-all hover:bg-slate-800/80 border-l-4 border-l-indigo-500 shadow-lg">
             <button 
               onClick={triggerHint}
               disabled={status !== GameStatus.PLAYING}
               className={`
                 flex-shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center text-3xl transition-all duration-300
                 ${status === GameStatus.PLAYING 
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg active:scale-90' 
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_10px_20px_rgba(79,70,229,0.3)] active:scale-90' 
                   : 'bg-slate-800 text-slate-600 cursor-not-allowed'}
               `}
             >
               <i className="fa-solid fa-microchip"></i>
             </button>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-black">推演内核 V2.0</span>
-              <p className="text-slate-400 text-sm leading-relaxed font-medium">
-                {hintMessage || (status === GameStatus.IDLE ? "点击任意起始位，系统将计算拓扑结构以确保逻辑闭环。" : "支持 1-2-1 / 1-2-2-1 等进阶模式的自动化子集识别。")}
+            <div className="flex flex-col gap-1.5 flex-1 overflow-hidden">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-black flex items-center gap-2">
+                DEDUCTION CORE
+                {status === GameStatus.PLAYING && <span className="inline-flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-ping"></span>}
+              </span>
+              <p className="text-slate-300 text-sm leading-relaxed font-medium truncate">
+                {hintMessage || (status === GameStatus.IDLE ? "待命中：逻辑验证确保100%可解。" : "就绪：点击芯片图标获取二阶子集推导结果。")}
               </p>
             </div>
+
+            {/* 游戏状态快速反馈 */}
+            <div className="flex-shrink-0">
+              {status === GameStatus.WON && (
+                <div className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-black border border-emerald-500/30 uppercase animate-bounce">Win</div>
+              )}
+              {status === GameStatus.LOST && (
+                <div className="px-3 py-1 bg-red-500/20 text-red-400 rounded-lg text-[10px] font-black border border-red-500/30 uppercase">Fail</div>
+              )}
+            </div>
           </div>
-          
-          <div className="md:w-64 flex flex-col justify-center gap-3">
-             {status === GameStatus.WON && (
-               <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl text-center text-emerald-400 font-black text-xs uppercase tracking-widest animate-bounce">
-                 LOGIC CLEARED
-               </div>
-             )}
-             {status === GameStatus.LOST && (
-               <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl text-center text-red-400 font-black text-xs uppercase tracking-widest">
-                 DEDUCTION FAILED
-               </div>
-             )}
+
+          {/* 操作介绍面板 */}
+          <div className="lg:col-span-4 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col justify-center gap-3">
+             <div className="flex items-center gap-3 text-slate-400 hover:text-slate-200 transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px]">
+                  <i className="fa-solid fa-arrow-pointer"></i>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500">左键点击</span>
+                  <span className="text-xs font-bold">揭开区域 / 开始游戏</span>
+                </div>
+             </div>
+             <div className="flex items-center gap-3 text-slate-400 hover:text-slate-200 transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px]">
+                  <i className="fa-solid fa-flag"></i>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500">右键点击</span>
+                  <span className="text-xs font-bold">标记地雷 / 取消标记</span>
+                </div>
+             </div>
+             <div className="flex items-center gap-3 text-slate-400 hover:text-slate-200 transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px]">
+                  <i className="fa-solid fa-bolt"></i>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500">数字双击</span>
+                  <span className="text-xs font-bold">智能开图 (需满足标记数)</span>
+                </div>
+             </div>
           </div>
+
         </div>
       </div>
       
-      <div className="mt-8 opacity-40 text-slate-700 text-[9px] uppercase tracking-[0.4em] font-black flex flex-wrap justify-center gap-10">
+      <div className="mt-8 opacity-30 text-slate-700 text-[9px] uppercase tracking-[0.4em] font-black flex flex-wrap justify-center gap-10">
         <span>Subset Reduction Logic</span>
         <span>Discrete Math Engine</span>
         <span>Pattern Match v2</span>
